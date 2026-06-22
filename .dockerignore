@@ -1,0 +1,21 @@
+# Keep the build context small and the image clean.
+# NOTE: model_artifact/ is intentionally NOT ignored — it's baked into the image.
+
+.venv/
+__pycache__/
+*.pyc
+
+# MLflow tracking store — not needed in the image (model is baked via MODEL_PATH).
+# Also avoids shipping absolute host paths that won't resolve inside the container.
+mlruns/
+mlflow.db
+
+# Docs and git
+docs/
+.git/
+.gitignore
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
