@@ -40,9 +40,17 @@ def main() -> None:
         shutil.rmtree(OUT_DIR)
     mlflow.sklearn.save_model(sk_model=model, path=OUT_DIR.as_posix())
 
-    (PROJECT_ROOT / "model_artifact" / "EXPORTED_VERSION.txt").write_text(
-        str(latest.version), encoding="utf-8"
-    )
+    (OUT_DIR / "EXPORTED_VERSION.txt").write_text(str(latest.version), encoding="utf-8")
+
+    # Bake the drift-detection reference next to the model so the container can
+    # monitor for drift without access to the original training pipeline (M5).
+    ref_src = PROJECT_ROOT / "monitoring" / "reference_data.csv"
+    if ref_src.exists():
+        shutil.copy(ref_src, OUT_DIR / "reference_data.csv")
+        print(f"Bundled drift reference -> {OUT_DIR / 'reference_data.csv'}")
+    else:
+        print("WARNING: no reference_data.csv found — run src/train.py first.")
+
     print(f"Exported '{REGISTERED_MODEL_NAME}' v{latest.version} -> {OUT_DIR}")
 
 

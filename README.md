@@ -12,9 +12,9 @@ but any tabular dataset can be swapped in.
 - [x] **M1 — Train + experiment tracking** (`src/train.py`, MLflow + full eval suite)
 - [x] **M3 — Serve** (`src/serve.py`, FastAPI `/predict` endpoint)
 - [x] **M2 — Containerize** (`Dockerfile`, baked model artifact)
-- [ ] M4 — CI/CD (GitHub Actions)
-- [ ] M5 — Drift detection + monitoring
-- [ ] M6 — Deploy to cloud (SageMaker / Vertex AI)
+- [x] **M4 — CI/CD** (`.github/workflows/ci.yml`, `pytest` suite)
+- [x] **M5 — Monitoring** (`src/monitoring.py`, drift detection + prediction logging)
+- [x] **M6 — Cloud deploy** (runbook in `docs/deployment.md`, SageMaker BYOC)
 
 ## Quickstart
 
@@ -43,8 +43,16 @@ ml-pipeline-project/
   src/
     train.py        # M1 — train + full evaluation, logged to MLflow
     serve.py        # M3 — FastAPI service: loads registered model, /predict
+    export_model.py # M2 — export the registered model to a portable artifact
+    monitoring.py   # M5 — prediction logging + PSI/KS drift detection
+    check_drift.py  # M5 — CLI drift check (exits non-zero on drift, for cron/CI)
+  tests/            # M4 — pytest suite (API, metrics, drift)
   docs/
     evaluation.md   # what each metric means & which to optimize (read this)
+    monitoring.md   # how drift detection works (PSI, KS, pitfalls)
+    deployment.md   # SageMaker deploy runbook (M6)
+  Dockerfile        # M2 — containerized serving
+  .github/workflows/ci.yml   # M4 — CI pipeline
   requirements.txt
   README.md
   .gitignore
@@ -61,6 +69,7 @@ python src/serve.py        # starts FastAPI on http://127.0.0.1:8000
 | `GET /health` | liveness + which model version is loaded |
 | `GET /example` | returns a real malignant sample to paste into `/predict` |
 | `POST /predict` | body `{"features": [..30 floats..]}` → `{malignant_probability, prediction}` |
+| `GET /monitoring/drift` | data-drift report on recent inputs (M5) |
 | `GET /docs` | interactive Swagger UI |
 
 The endpoint applies the **0.40 decision threshold** chosen in `docs/evaluation.md`
@@ -88,6 +97,41 @@ curl http://127.0.0.1:8000/health
 back to the MLflow registry for local dev. *Future optimization: the image is ~1.3GB
 because MLflow pulls heavy deps; loading the model with `skops`/`joblib` directly would
 slim it substantially.*
+
+## Tests & CI (M4)
+
+```bash
+pip install -r requirements-dev.txt
+pytest                     # 7 tests: API behavior + metric logic
+```
+
+`.github/workflows/ci.yml` runs on every push / PR to `main`:
+**install deps → train → export model → `pytest` → `docker build`**. This guarantees the
+model trains, the API passes its tests, and the image still builds before anything merges.
+
+## Monitoring (M5)
+
+Every prediction is logged, and inputs are checked for **data drift** against the
+training distribution using **PSI** and the **KS test**. Demonstrated end-to-end:
+normal traffic reads as `0/30` features drifted; inputs scaled ×1.4 read as `30/30`.
+
+```bash
+# live, on the running API
+curl "http://127.0.0.1:8000/monitoring/drift?window=200"
+
+# scheduled / CI check — exits non-zero on drift
+python src/check_drift.py --window 500
+```
+
+How it works, the two metrics, and a real small-sample pitfall are documented in
+[`docs/monitoring.md`](docs/monitoring.md).
+
+## Cloud deploy (M6)
+
+The container deploys to **AWS SageMaker** (bring-your-own-container). The full
+runbook — ECR push, model/endpoint creation, the `/ping` + `/invocations` contract,
+invocation, teardown, and cheaper serverless/Vertex AI paths — is in
+[`docs/deployment.md`](docs/deployment.md).
 
 ## Evaluation
 

@@ -31,11 +31,22 @@ from mlflow.tracking import MlflowClient
 from pydantic import BaseModel, Field, field_validator
 from sklearn.datasets import load_breast_cancer
 
+# Import the monitoring module whether serve.py is loaded as a package
+# (uvicorn src.serve:app, pytest) or run directly (python src/serve.py).
+try:
+    from src import monitoring
+except ImportError:  # pragma: no cover - script-mode fallback
+    import monitoring
+
 # ---- Configuration -------------------------------------------------------
 REGISTERED_MODEL_NAME = "breast-cancer-classifier"
 # Operating threshold chosen in docs/evaluation.md: trade a little precision for
 # higher recall on malignant (a missed cancer costs far more than a false alarm).
 DECISION_THRESHOLD = 0.40
+# Minimum logged predictions before a drift report is statistically meaningful.
+# PSI bins inputs into deciles, so small samples leave empty bins and produce
+# noisy, inflated scores — require a reasonable sample before reporting.
+MIN_DRIFT_SAMPLES = 100
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -153,12 +164,40 @@ def predict(req: PredictRequest) -> PredictResponse:
         raise HTTPException(status_code=400, detail=f"Prediction failed: {exc}") from exc
 
     label = "malignant" if proba >= DECISION_THRESHOLD else "benign"
+
+    # Log the prediction for monitoring (M5). Never let logging break serving.
+    try:
+        monitoring.log_prediction(req.features, round(proba, 4), label)
+    except Exception:  # pragma: no cover - logging is best-effort
+        pass
+
     return PredictResponse(
         malignant_probability=round(proba, 4),
         threshold=DECISION_THRESHOLD,
         prediction=label,
         model_version=str(MODEL_VERSION),
     )
+
+
+@app.get("/monitoring/drift")
+def drift(window: int | None = None) -> dict:
+    """Compare recently logged inputs against the training data (drift check).
+
+    `window` limits the check to the last N logged predictions (default: all).
+    """
+    current = monitoring.load_recent_predictions(window)
+    if len(current) < MIN_DRIFT_SAMPLES:
+        return {
+            "status": "insufficient_data",
+            "n_current": len(current),
+            "min_required": MIN_DRIFT_SAMPLES,
+            "hint": "Send more predictions, then re-check.",
+        }
+    reference = monitoring.load_reference()
+    report = monitoring.compute_drift_report(reference, current)
+    report["n_current"] = len(current)
+    report["status"] = "ok"
+    return report
 
 
 if __name__ == "__main__":

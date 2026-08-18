@@ -165,8 +165,22 @@ def threshold_sweep(y_test, proba) -> str:
     return table
 
 
+def save_reference_data(X_train) -> None:
+    """Persist the training features as the drift-detection reference (M5).
+
+    Monitoring compares production inputs against this snapshot of what the model
+    was trained on. See src/monitoring.py.
+    """
+    ref_dir = PROJECT_ROOT / "monitoring"
+    ref_dir.mkdir(exist_ok=True)
+    X_train.to_csv(ref_dir / "reference_data.csv", index=False)
+
+
 def main() -> None:
     X_train, X_test, y_train, y_test = load_data()
+
+    # Snapshot the training distribution for drift monitoring.
+    save_reference_data(X_train)
 
     # All runs land under one named experiment so they're easy to compare.
     mlflow.set_experiment(EXPERIMENT_NAME)
