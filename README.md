@@ -7,6 +7,34 @@ The pipeline is **dataset-agnostic** — it ships with a built-in scikit-learn d
 (Breast Cancer Wisconsin, binary classification) so it runs with zero external data,
 but any tabular dataset can be swapped in.
 
+## Results
+
+| | |
+|---|---|
+| Model | ROC-AUC **0.994**, registered and versioned in MLflow |
+| Serving | containerized FastAPI `/predict`; container output verified identical to local inference |
+| CI | install → train → export → test → image build, gated on **14 tests** |
+| Drift detection | PSI + KS per feature: **0/30** flagged on stable data, **30/30** under a known shift |
+| Sample-size floor | measured, not guessed — see below |
+
+**The drift check once lied to me.** On clean data it reported 28 of 30 features drifted.
+Nothing failed; the pipeline was green. Causes: a non-random sample, and too few rows for
+decile binning. Rather than patch it and move on, I wrote
+[`src/sample_size_study.py`](src/sample_size_study.py), which scores no-drift samples with the
+same estimator the endpoint uses, so any alarm it raises comes from sample size alone:
+
+| n | mean PSI | false alarms |
+|---|---|---|
+| 30 | 0.737 | **68.2%** |
+| 50 | 0.247 | 26.9% |
+| **100** | 0.096 | **0.8%** |
+
+That is where `MIN_DRIFT_SAMPLES = 100` comes from, and
+[`tests/test_sample_size.py`](tests/test_sample_size.py) fails if anyone lowers it.
+Known weakness, documented in [`docs/monitoring.md`](docs/monitoring.md): the 1e-6 epsilon floor
+makes PSI's magnitude depend on a constant I chose. Deleting it sends PSI to infinity;
+collapsing sparse bins is the real fix, and it isn't done yet.
+
 ## Status (milestone tracker)
 
 - [x] **M1 — Train + experiment tracking** (`src/train.py`, MLflow + full eval suite)

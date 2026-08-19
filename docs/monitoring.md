@@ -68,6 +68,37 @@ are mostly noise.
 
 ---
 
+### Why the floor is 100, measured rather than guessed
+
+`src/sample_size_study.py` draws no-drift samples from the reference distribution
+itself and scores them with the same `population_stability_index()` the endpoint
+uses, 1e-6 floor included. Any alarm it raises is caused by sample size alone.
+
+| n | mean PSI | median | false alarms | any empty bin |
+|---|---|---|---|---|
+| 30 | 0.737 | 0.337 | **68.2%** | 36.5% |
+| 50 | 0.247 | 0.186 | 26.9% | 4.8% |
+| **100** | 0.096 | 0.088 | **0.8%** | 0.1% |
+| 200 | 0.046 | 0.043 | 0.0% | 0.0% |
+| 500 | 0.018 | 0.017 | 0.0% | 0.0% |
+
+At 30 rows the check false-alarms on clean data **more often than not**. At 100 it
+is under 1%. That is where `MIN_DRIFT_SAMPLES` comes from. `tests/test_sample_size.py`
+fails if anyone lowers it.
+
+Run it: `python -m src.sample_size_study`
+
+### ⚠️ The 1e-6 floor is still a known weakness
+
+Flooring empty bins keeps the log finite, but it makes PSI's magnitude depend on the
+constant we chose: an empty bin contributes `(1e-6 - 0.1) * ln(1e-6 / 0.1)` = **1.151**
+on its own, and that value moves 3.5x between 1e-3 and 1e-8. Nine empty bins — all rows
+in one decile — gives PSI = 12.4, about **50x** `PSI_THRESHOLD`.
+
+**Deleting the floor is not the fix** (PSI goes to infinity). The fix is collapsing
+sparse bins so the estimator never needs a floor. Not done yet; the sample-size floor
+above currently prevents the condition instead of curing it.
+
 ## 4. How to use it
 
 **Live endpoint** (on the running API):
